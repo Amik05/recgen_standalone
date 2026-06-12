@@ -39,7 +39,7 @@ sysroot_linux-64 = "2.17.*"
 [feature.base.pypi-dependencies]
 recgen_inference = { path = ".", editable = true }
 pillow = ">=9.0"
-scipy = ">=1.11"
+scipy = ">=1.11,<1.15"
 trimesh = ">=4.0"
 safetensors = ">=0.4"
 huggingface-hub = ">=0.20"
@@ -65,24 +65,28 @@ imageio-ffmpeg = ">=0.5"
 opencv-python-headless = ">=4.8"
 pyrender = "*"
 
-# ── CUDA 12.1 feature ───────────────────────────────────────────────────
+# ── CUDA 12.8 / Nightly feature ────────────
 [feature.cu121]
-channels = ["pytorch", "nvidia/label/cuda-12.1.0", "nvidia", "conda-forge"]
+channels = ["nvidia", "conda-forge"]
 
 [feature.cu121.dependencies]
-pytorch = { version = "==2.4.0", channel = "pytorch" }
-torchvision = { version = "==0.19.0", channel = "pytorch" }
-pytorch-cuda = { version = "12.1.*", channel = "pytorch" }
-cuda-toolkit = { version = "12.1.*", channel = "nvidia/label/cuda-12.1.0" }
-cuda-nvcc = { version = "12.1.*", channel = "nvidia/label/cuda-12.1.0" }
-cuda-cccl = { version = "12.1.*", channel = "nvidia/label/cuda-12.1.0" }
+# Downgraded to 12.8 to perfectly match the PyTorch Nightly wheel
+cuda-toolkit = { version = "12.8.*", channel = "nvidia" }
+cuda-nvcc = { version = "12.8.*", channel = "nvidia" }
+cuda-cccl = { version = "12.8.*", channel = "nvidia" }
 
 [feature.cu121.pypi-options]
-extra-index-urls = ["https://download.pytorch.org/whl/cu121"]
+extra-index-urls = [
+    "https://download.pytorch.org/whl/nightly/cu128", 
+    "https://download.pytorch.org/whl/nightly/cu126",
+    "https://download.pytorch.org/whl/nightly/cu124"
+]
+index-strategy = "unsafe-best-match"
 
 [feature.cu121.pypi-dependencies]
-xformers = "==0.0.27.post2"
-spconv-cu120 = ">=2.3"
+torch = "*"
+torchvision = "*"
+spconv-cu124 = ">=2.3"
 
 # ── CUDA 11.8 feature ───────────────────────────────────────────────────
 [feature.cu118]

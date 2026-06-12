@@ -8,6 +8,9 @@ if ATTN == 'xformers':
     import xformers.ops as xops
 elif ATTN == 'flash_attn':
     import flash_attn
+elif ATTN == 'sdpa':
+    # Native PyTorch SDPA backend for Blackwell / FP32 compatibility
+    pass
 else:
     raise ValueError(f"Unknown attention module: {ATTN}")
 
@@ -110,6 +113,14 @@ def sparse_windowed_scaled_dot_product_self_attention(
             out = xops.memory_efficient_attention(q, k, v)          # [B, N, H, C]
         elif ATTN == 'flash_attn':
             out = flash_attn.flash_attn_qkvpacked_func(qkv_feats)   # [B, N, H, C]
+        elif ATTN == 'sdpa':
+            # Native PyTorch SDPA expects layout [B, H, N, C]
+            q, k, v = qkv_feats.unbind(dim=2)                       # [B, N, H, C]
+            q = q.transpose(1, 2)                                   # [B, H, N, C]
+            k = k.transpose(1, 2)                                   # [B, H, N, C]
+            v = v.transpose(1, 2)                                   # [B, H, N, C]
+            out = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+            out = out.transpose(1, 2)                               # [B, N, H, C]
         else:
             raise ValueError(f"Unknown attention module: {ATTN}")
         out = out.reshape(B * N, H, C)                              # [M, H, C]
@@ -125,6 +136,28 @@ def sparse_windowed_scaled_dot_product_self_attention(
             cu_seqlens = torch.cat([torch.tensor([0]), torch.cumsum(torch.tensor(seq_lens), dim=0)], dim=0) \
                         .to(qkv.device).int()
             out = flash_attn.flash_attn_varlen_qkvpacked_func(qkv_feats, cu_seqlens, max(seq_lens)) # [M, H, C]
+        elif ATTN == 'sdpa':
+            # Variable-length batching using an explicit block-diagonal boolean mask
+            q, k, v = qkv_feats.unbind(dim=1)                       # [M, H, C]
+            M_seq = q.shape[0]
+            
+            # Construct block-diagonal attention mask
+            attn_mask = torch.zeros((M_seq, M_seq), dtype=torch.bool, device=q.device)
+            start = 0
+            for l in seq_lens:
+                attn_mask[start:start+l, start:start+l] = True
+                start += l
+            
+            # Format tensors to standard SDPA shapes: [1, H, M_seq, C]
+            q = q.transpose(0, 1).unsqueeze(0)
+            k = k.transpose(0, 1).unsqueeze(0)
+            v = v.transpose(0, 1).unsqueeze(0)
+            attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)         # [1, 1, M_seq, M_seq]
+            
+            out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            out = out.squeeze(0).transpose(0, 1)                    # [M, H, C]
+        else:
+            raise ValueError(f"Unknown attention module: {ATTN}")
 
     out = out[bwd_indices]      # [T, H, C]
 

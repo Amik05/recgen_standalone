@@ -9,9 +9,11 @@ if ATTN == 'xformers':
     import xformers.ops as xops
 elif ATTN == 'flash_attn':
     import flash_attn
+elif ATTN == 'sdpa':
+    # Native PyTorch SDPA backend for Blackwell / FP32 compatibility
+    pass
 else:
     raise ValueError(f"Unknown attention module: {ATTN}")
-
 
 __all__ = [
     'sparse_serialized_scaled_dot_product_self_attention',
