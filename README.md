@@ -59,13 +59,186 @@ bash scripts/setup_cuda.sh --all        # everything
 
 Model weights are downloaded automatically from HuggingFace (`TRI-ML/RecGen`) on first run.
 
+### SAM 2 (for creating masks on your own captures)
+
+RecGen does not segment objects — you need a mask PNG. Install SAM 2 once:
+
+```bash
+pixi run pip install sam2
+```
+
+---
+
+## Pipeline Overview
+
+```
+RGB + Depth + Intrinsics
+        │
+        ▼
+  make_mask_sam.py     ← SAM 2 (click or box prompts)
+        │
+        ▼
+     mask.png
+        │
+        ▼
+  run_inference.py     ← RecGen (mesh + pose + overlay)
+        │
+        ▼
+  mesh.obj, overlay.png, metadata.json, …
+```
+
+| Step | Tool | When |
+|------|------|------|
+| Mask | `scripts/make_mask_sam.py` | Your own RGB-D captures |
+| Reconstruct | `scripts/run_inference.py` | Always |
+| Intrinsics | `scripts/dump_orbbec_intrinsics.py` | Optional — Orbbec Femto Bolt |
+
+Shipped examples under `examples/` already include masks — skip the mask step for those.
+
+---
+
+## Quick Start: Shipped Examples
+
+The repo includes six ready-to-run examples under `examples/` (`ex0`–`ex5`). Each has a matching RGB image, depth map, and object mask. All examples share `examples/intrinsics.yaml`.
+
+From the repository root (after `pixi install`):
+
+```bash
+# Run example 0 (default output: outputs/inference_outputs/ex0/)
+pixi run python scripts/run_inference.py \
+    --rgb examples/ex0_rgb.png \
+    --depth examples/ex0_depth.png \
+    --mask examples/ex0_mask.png \
+    --intrinsics examples/intrinsics.yaml \
+    --name ex0
+```
+
+Check `outputs/inference_outputs/ex0/overlay.png` to verify the reconstruction lines up with the input image.
+
+**Run any other shipped example** — change the file prefix and `--name`:
+
+```bash
+# ex1 … ex5
+pixi run python scripts/run_inference.py \
+    --rgb examples/ex1_rgb.png \
+    --depth examples/ex1_depth.png \
+    --mask examples/ex1_mask.png \
+    --intrinsics examples/intrinsics.yaml \
+    --name ex1
+```
+
+**With Gaussian splat export:**
+
+```bash
+pixi run python scripts/run_inference.py \
+    --rgb examples/ex0_rgb.png \
+    --depth examples/ex0_depth.png \
+    --mask examples/ex0_mask.png \
+    --intrinsics examples/intrinsics.yaml \
+    --name ex0 \
+    --save-splat
+```
+
+**Write to a custom output folder:**
+
+```bash
+pixi run python scripts/run_inference.py \
+    --rgb examples/ex0_rgb.png \
+    --depth examples/ex0_depth.png \
+    --mask examples/ex0_mask.png \
+    --intrinsics examples/intrinsics.yaml \
+    --out ./my_output
+```
+
+| Example | RGB | Depth | Mask |
+|---------|-----|-------|------|
+| ex0 | `examples/ex0_rgb.png` | `examples/ex0_depth.png` | `examples/ex0_mask.png` |
+| ex1 | `examples/ex1_rgb.png` | `examples/ex1_depth.png` | `examples/ex1_mask.png` |
+| ex2 | `examples/ex2_rgb.png` | `examples/ex2_depth.png` | `examples/ex2_mask.png` |
+| ex3 | `examples/ex3_rgb.png` | `examples/ex3_depth.png` | `examples/ex3_mask.png` |
+| ex4 | `examples/ex4_rgb.png` | `examples/ex4_depth.png` | `examples/ex4_mask.png` |
+| ex5 | `examples/ex5_rgb.png` | `examples/ex5_depth.png` | `examples/ex5_mask.png` |
+
+Preview thumbnails for each example are in `examples/thumbnails/`.
+
+---
+
+## Your Own Captures (`custom_examples/`)
+
+Sample Orbbec captures live in `custom_examples/` (`color2`, `color3`, `frame_0145`, etc.). Unlike shipped examples, **you must create a mask** before running inference.
+
+### 1. Create a mask with SAM
+
+**Remote SSH (no display)** — use the browser UI with port forwarding:
+
+```bash
+# On your laptop (separate terminal):
+ssh -L 8765:localhost:8765 user@remote-host
+
+# On the remote machine (repo root):
+pixi run python scripts/make_mask_sam.py \
+    --rgb custom_examples/color3.png \
+    --interactive-web \
+    --port 8765 \
+    --output custom_examples/mask3.png \
+    --preview custom_examples/mask3_preview.png
+```
+
+Open **http://localhost:8765** on your laptop. **Left-click** = object, **right-click** = background, then **Generate mask**.
+
+**Local machine with a display:**
+
+```bash
+pixi run python scripts/make_mask_sam.py \
+    --rgb custom_examples/color3.png \
+    --interactive \
+    --output custom_examples/mask3.png \
+    --preview custom_examples/mask3_preview.png
+```
+
+**CLI prompts (no GUI)** — box and/or pixel coordinates:
+
+```bash
+pixi run python scripts/make_mask_sam.py \
+    --rgb custom_examples/color3.png \
+    --box 400 200 900 600 \
+    --point 640 420 \
+    --output custom_examples/mask3.png
+```
+
+Avoid `--refine-depth` unless depth on the object is reliable (it can destroy masks when depth is sparse).
+
+### 2. Run RecGen
+
+```bash
+pixi run python scripts/run_inference.py \
+    --rgb custom_examples/color3.png \
+    --depth custom_examples/depth3.png \
+    --mask custom_examples/mask3.png \
+    --intrinsics custom_examples/frame_intrinsics_approx.yaml \
+    --out ./out_color3 \
+    --save-splat
+```
+
+### 3. Orbbec camera intrinsics
+
+For accurate pose and overlay alignment, dump real intrinsics from a connected Femto Bolt:
+
+```bash
+pixi run python scripts/dump_orbbec_intrinsics.py \
+    --width 1280 --height 720 \
+    --output custom_examples/frame_intrinsics.yaml
+```
+
+Requires `pyorbbecsdk`. `custom_examples/frame_intrinsics_approx.yaml` is a rough 1280×720 guess — fine for mesh shape, less accurate for pose.
+
 ---
 
 ## Running Inference
 
 ### CLI: `scripts/run_inference.py`
 
-The main entry point for single-view reconstruction:
+The main entry point for single-view reconstruction on your own captures:
 
 ```bash
 pixi run python scripts/run_inference.py \
@@ -99,7 +272,7 @@ pixi run python scripts/run_inference.py \
     --depth examples/ex0_depth.png \
     --mask examples/ex0_mask.png \
     --intrinsics examples/intrinsics.yaml \
-    --out ./out_color2 \
+    --out ./my_output \
     --save-splat \
     --save-glb
 ```
@@ -156,7 +329,23 @@ Place your input files anywhere on disk and pass their paths to `--rgb`, `--dept
 
 * **Format:** PNG (grayscale or single channel)
 * **Values:** Any non-zero pixel marks the object; zero = background
+* **How to create:** Use `scripts/make_mask_sam.py` (SAM 2). Shipped `examples/ex*_mask.png` files are pre-made.
 * **Tip:** The pipeline erodes the mask by default (5×5 kernel, 1 iteration) to trim noisy depth edges
+
+#### `make_mask_sam.py` flags
+
+| Flag | Description |
+|------|-------------|
+| `--rgb` | Input RGB image (required) |
+| `--interactive` | Click prompts in a matplotlib window (needs local display) |
+| `--interactive-web` | Click prompts in a browser (SSH-friendly; use with `ssh -L`) |
+| `--port` | Port for `--interactive-web` (default: `8765`) |
+| `--point X Y` | Foreground pixel prompt (repeatable) |
+| `--background-point X Y` | Background pixel prompt (repeatable) |
+| `--box X1 Y1 X2 Y2` | Bounding box around the object |
+| `--refine-depth` | Zero mask pixels where depth == 0 (use with caution) |
+| `--output` | Output mask PNG |
+| `--preview` | Optional green overlay preview PNG |
 
 ### Intrinsics (`--intrinsics`)
 
@@ -177,7 +366,7 @@ K = [[fu,  0, pu],
      [ 0,  0,  1]]
 ```
 
-See `examples/intrinsics.yaml` for a reference file. The example RGB/depth/mask images (`ex0_*.png`) referenced in the CLI are expected under `examples/` but may need to be supplied separately.
+See `examples/intrinsics.yaml` for a reference file. Shipped sample images (`ex0_*.png`–`ex5_*.png`) are included under `examples/` — see [Quick Start: Shipped Examples](#quick-start-shipped-examples).
 
 ---
 
@@ -215,14 +404,19 @@ or to the path given by `--out`. A typical run produces:
 ```
 recgen/
 ├── scripts/
-│   ├── run_inference.py      # CLI entry point
-│   └── setup_cuda.sh         # Optional CUDA extension installer
+│   ├── run_inference.py          # RecGen CLI entry point
+│   ├── make_mask_sam.py          # SAM 2 mask creation (click / web / box)
+│   ├── dump_orbbec_intrinsics.py # Orbbec Femto Bolt intrinsics → YAML
+│   └── setup_cuda.sh             # Optional CUDA extension installer
 ├── examples/
-│   └── intrinsics.yaml       # Sample camera intrinsics
+│   ├── ex0_rgb.png … ex5_*.png   # Shipped RGB-D + mask examples
+│   ├── intrinsics.yaml           # Camera intrinsics for shipped examples
+│   └── thumbnails/
+├── custom_examples/              # Team RGB-D captures (masks not included)
 ├── outputs/
-│   └── inference_outputs/    # Default CLI output root
-├── recgen_inference/         # Python package (importable API)
-└── pixi.toml                 # Environment definition
+│   └── inference_outputs/        # Default CLI output root
+├── recgen_inference/             # Python package (importable API)
+└── pixi.toml                     # Environment definition
 ```
 
 ---
