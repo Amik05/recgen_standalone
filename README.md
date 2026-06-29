@@ -95,6 +95,28 @@ RGB + Depth + Intrinsics
 
 Shipped examples under `examples/` already include masks — skip the mask step for those.
 
+### Short commands (recommended)
+
+Put captures in `custom_examples/` as `<name>_rgb.png`, `<name>_depth.png`, and (after masking) `<name>_mask.png`. Then:
+
+```bash
+cd recgen
+
+# 1) New capture — mask in browser (SSH: ssh -L 8765:localhost:8765 … first)
+./scripts/run_capture.sh mug70 --mask
+
+# 2) Reconstruct (mask must already exist)
+./scripts/run_capture.sh mug70
+
+# Or both in one go after you have RGB+depth saved:
+./scripts/run_capture.sh mug70 --all
+
+# Shipped example
+./scripts/run_capture.sh ex0 --example
+```
+
+You only re-run **step 1** when you need a new or better mask. Step 2 is the one you repeat if you tweak intrinsics or want another export.
+
 ---
 
 ## Quick Start: Shipped Examples
@@ -405,6 +427,7 @@ or to the path given by `--out`. A typical run produces:
 recgen/
 ├── scripts/
 │   ├── run_inference.py          # RecGen CLI entry point
+│   ├── run_capture.sh            # Short wrapper: ./run_capture.sh mug70 [--mask|--all]
 │   ├── make_mask_sam.py          # SAM 2 mask creation (click / web / box)
 │   ├── dump_orbbec_intrinsics.py # Orbbec Femto Bolt intrinsics → YAML
 │   └── setup_cuda.sh             # Optional CUDA extension installer

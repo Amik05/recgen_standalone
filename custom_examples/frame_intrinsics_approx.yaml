@@ -1,5 +1,5 @@
-# Approximate Femto Bolt color intrinsics @ 1280x720 (~80° x 51° FOV)
-fu: 763
-fv: 755
-pu: 640
-pv: 360
+# Femto Bolt color @ 1280x720
+fu: 748.715
+fv: 748.364
+pu: 631.869
+pv: 356.023
