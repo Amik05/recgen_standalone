@@ -35,31 +35,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-import cv2
 import numpy as np
 from PIL import Image
+
+from recgen_inference.masking import (
+    draw_mask_preview,
+    load_depth,
+    load_rgb,
+    refine_mask_with_depth,
+    segment_sam2,
+)
 
 
 def _default_output(rgb_path: Path) -> Path:
     return rgb_path.with_name(rgb_path.stem.replace("_rgb", "") + "_mask.png")
-
-
-def _load_rgb(path: Path) -> np.ndarray:
-    bgr = cv2.imread(str(path))
-    if bgr is None:
-        raise FileNotFoundError(path)
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-
-
-def _refine_with_depth(mask: np.ndarray, depth_path: Path) -> np.ndarray:
-    depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
-    if depth is None:
-        raise FileNotFoundError(depth_path)
-    if depth.shape != mask.shape:
-        raise ValueError(f"depth {depth.shape} and mask {mask.shape} must match")
-    valid = depth > 0
-    refined = np.where(valid, mask, 0).astype(np.uint8)
-    return refined
 
 
 def _pick_points_interactive(rgb: np.ndarray) -> tuple[list[tuple[int, int]], list[int]]:
@@ -299,34 +288,6 @@ def _pick_points_web(
     return result["points"], result["labels"]
 
 
-def _segment_sam2(
-    rgb: np.ndarray,
-    points: list[tuple[int, int]],
-    labels: list[int],
-    box: tuple[int, int, int, int] | None,
-    model_id: str,
-) -> np.ndarray:
-    import torch
-    from sam2.sam2_image_predictor import SAM2ImagePredictor
-
-    predictor = SAM2ImagePredictor.from_pretrained(model_id, device="cuda" if torch.cuda.is_available() else "cpu")
-    predictor.set_image(rgb)
-
-    point_coords = np.array(points, dtype=np.float32) if points else None
-    point_labels = np.array(labels, dtype=np.int32) if points else None
-    box_arr = np.array(box, dtype=np.float32)[None, :] if box is not None else None
-
-    masks, scores, _ = predictor.predict(
-        point_coords=point_coords,
-        point_labels=point_labels,
-        box=box_arr,
-        multimask_output=True,
-    )
-    best = int(np.argmax(scores))
-    mask = (masks[best] > 0).astype(np.uint8) * 255
-    return mask
-
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Create a RecGen mask with SAM 2")
     p.add_argument("--rgb", required=True, type=Path, help="RGB image path")
@@ -396,7 +357,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    rgb = _load_rgb(args.rgb)
+    rgb = load_rgb(args.rgb)
 
     points: list[tuple[int, int]] = []
     labels: list[int] = []
@@ -424,12 +385,12 @@ def main() -> None:
     if not points and box is None:
         raise SystemExit("Provide --interactive, --interactive-web, --point, or --box.")
 
-    mask = _segment_sam2(rgb, points, labels, box, args.model)
+    mask = segment_sam2(rgb, points=points, labels=labels, box=box, model_id=args.model)
 
     if args.refine_depth:
         if args.depth is None:
             raise SystemExit("--refine-depth requires --depth")
-        mask = _refine_with_depth(mask, args.depth)
+        mask = refine_mask_with_depth(mask, load_depth(args.depth))
 
     out = args.output or _default_output(args.rgb)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -439,9 +400,7 @@ def main() -> None:
     print(f"Saved mask: {out}  ({mask.shape[1]}x{mask.shape[0]}, {fg_pct:.2f}% foreground)")
 
     if args.preview:
-        overlay = rgb.copy()
-        overlay[mask > 0] = (overlay[mask > 0] * 0.5 + np.array([0, 255, 0]) * 0.5).astype(np.uint8)
-        Image.fromarray(overlay).save(args.preview)
+        Image.fromarray(draw_mask_preview(rgb, mask)).save(args.preview)
         print(f"Saved preview: {args.preview}")
 
 

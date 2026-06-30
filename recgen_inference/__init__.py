@@ -10,6 +10,7 @@ Quick start:
 from recgen_inference import build_recgen
 from recgen_inference._result import RecGenResult
 from recgen_inference.inference import generate, generate_multiview
+from recgen_inference.masking import mask_from_prompt
 
 __version__ = "0.1.0"
 
@@ -17,6 +18,7 @@ __all__ = [
     "build_recgen",
     "generate",
     "generate_multiview",
+    "mask_from_prompt",
     "RecGenResult",
     "__version__",
 ]

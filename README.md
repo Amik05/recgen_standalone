@@ -59,12 +59,49 @@ bash scripts/setup_cuda.sh --all        # everything
 
 Model weights are downloaded automatically from HuggingFace (`TRI-ML/RecGen`) on first run.
 
-### SAM 2 (for creating masks on your own captures)
+### SAM 2 + Grounding DINO (masks for your own captures)
 
-RecGen does not segment objects — you need a mask PNG. Install SAM 2 once:
+RecGen does not segment objects — you need a mask PNG.
+
+**Semantic mask (recommended — text prompt, no clicks):**
 
 ```bash
-pixi run pip install sam2
+pixi run python scripts/mask_from_text.py \
+    --rgb custom_examples/mug70_rgb.png \
+    --prompt "white mug" \
+    --output custom_examples/mug70_mask.png \
+    --preview custom_examples/mug70_mask_preview.png
+```
+
+Or one command for mask + reconstruct:
+
+```bash
+./scripts/run_capture.sh mug70 --prompt "white mug" --all
+```
+
+**Manual mask (fallback)** — SAM 2 with browser clicks (`make_mask_sam.py --interactive-web`).
+
+`run_capture.sh` passes `--refine-depth` automatically when `<name>_depth.png` exists.
+
+Dependencies are installed via `pixi install` (`sam2`, `transformers`, `timm`).
+
+#### Prompt tips (text masking)
+
+- Use **specific, visual** phrases: `"white ceramic mug"` rather than `"mug"`.
+- If nothing is detected, lower `--box-threshold` (e.g. `0.15`) or try a shorter noun phrase.
+- When several objects match, list candidates with `--list-detections`, then pick one with `--pick N` (`0` = highest score).
+- Check `<name>_mask_bbox.png` to verify Grounding DINO found the right object before running RecGen.
+- If text masking fails, fall back to `./scripts/run_capture.sh <name> --mask` (browser clicks).
+
+**Python API:**
+
+```python
+from recgen_inference import mask_from_prompt
+import cv2
+
+rgb = cv2.cvtColor(cv2.imread("custom_examples/mug70_rgb.png"), cv2.COLOR_BGR2RGB)
+mask, meta = mask_from_prompt(rgb, "white mug")
+# meta: box, score, label, fg_pct, prompt
 ```
 
 ---
@@ -75,7 +112,8 @@ pixi run pip install sam2
 RGB + Depth + Intrinsics
         │
         ▼
-  make_mask_sam.py     ← SAM 2 (click or box prompts)
+  mask_from_text.py    ← text prompt → Grounding DINO → SAM 2  (autonomous)
+  make_mask_sam.py     ← click/box prompts                     (manual fallback)
         │
         ▼
      mask.png
@@ -89,8 +127,9 @@ RGB + Depth + Intrinsics
 
 | Step | Tool | When |
 |------|------|------|
-| Mask | `scripts/make_mask_sam.py` | Your own RGB-D captures |
-| Reconstruct | `scripts/run_inference.py` | Always |
+| Mask (semantic) | `scripts/mask_from_text.py` or `--prompt` on `run_capture.sh` | Your captures — text prompt |
+| Mask (manual) | `scripts/make_mask_sam.py` | Fallback when text fails |
+| Reconstruct | `scripts/run_inference.py` / `run_capture.sh` | Always |
 | Intrinsics | `scripts/dump_orbbec_intrinsics.py` | Optional — Orbbec Femto Bolt |
 
 Shipped examples under `examples/` already include masks — skip the mask step for those.
@@ -102,7 +141,10 @@ Put captures in `custom_examples/` as `<name>_rgb.png`, `<name>_depth.png`, and 
 ```bash
 cd recgen
 
-# 1) New capture — mask in browser (SSH: ssh -L 8765:localhost:8765 … first)
+# 1) New capture — semantic mask from text
+./scripts/run_capture.sh mug70 --prompt "white mug" --all
+
+# Or manual mask in browser (SSH: ssh -L 8765:localhost:8765 … first)
 ./scripts/run_capture.sh mug70 --mask
 
 # 2) Reconstruct (mask must already exist)
@@ -351,8 +393,27 @@ Place your input files anywhere on disk and pass their paths to `--rgb`, `--dept
 
 * **Format:** PNG (grayscale or single channel)
 * **Values:** Any non-zero pixel marks the object; zero = background
-* **How to create:** Use `scripts/make_mask_sam.py` (SAM 2). Shipped `examples/ex*_mask.png` files are pre-made.
+* **How to create:** Use `scripts/mask_from_text.py` (text prompt, recommended) or `scripts/make_mask_sam.py` (SAM 2 clicks). Shipped `examples/ex*_mask.png` files are pre-made.
 * **Tip:** The pipeline erodes the mask by default (5×5 kernel, 1 iteration) to trim noisy depth edges
+
+#### `mask_from_text.py` flags
+
+| Flag | Description |
+|------|-------------|
+| `--rgb` | Input RGB image (required) |
+| `--prompt` | Object description, e.g. `"white mug"` (required) |
+| `--output` | Output mask PNG |
+| `--preview` | Green overlay preview PNG |
+| `--bbox-preview` | DINO detection box drawn on RGB (default: `<mask>_bbox.png`) |
+| `--depth` | Depth map path (used with `--refine-depth`) |
+| `--refine-depth` | Zero mask pixels where depth == 0 |
+| `--box-threshold` | Grounding DINO box threshold (default: `0.25`) |
+| `--text-threshold` | Grounding DINO text threshold (default: `0.25`) |
+| `--pick` | Which detection when several match (`0` = highest score) |
+| `--list-detections` | Print all DINO hits and exit (no mask written) |
+| `--skip-validation` | Skip foreground / bbox quality checks |
+| `--dino-model` | Hugging Face Grounding DINO model id |
+| `--sam-model` | Hugging Face SAM 2.1 model id |
 
 #### `make_mask_sam.py` flags
 
@@ -427,8 +488,9 @@ or to the path given by `--out`. A typical run produces:
 recgen/
 ├── scripts/
 │   ├── run_inference.py          # RecGen CLI entry point
-│   ├── run_capture.sh            # Short wrapper: ./run_capture.sh mug70 [--mask|--all]
-│   ├── make_mask_sam.py          # SAM 2 mask creation (click / web / box)
+│   ├── run_capture.sh            # ./run_capture.sh mug70 --prompt "mug" --all
+│   ├── mask_from_text.py         # Grounding DINO + SAM (text prompt)
+│   ├── make_mask_sam.py          # SAM 2 mask (click / web / box)
 │   ├── dump_orbbec_intrinsics.py # Orbbec Femto Bolt intrinsics → YAML
 │   └── setup_cuda.sh             # Optional CUDA extension installer
 ├── examples/

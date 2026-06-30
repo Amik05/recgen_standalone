@@ -48,6 +48,9 @@ tqdm = ">=4.60"
 plyfile = ">=1.0"
 opencv-python-headless = ">=4.8"
 utils3d = { git = "https://github.com/EasternJournalist/utils3d.git", rev = "9a4eb15e4021b67b12c460c7057d642626897ec8" }
+sam2 = ">=1.0"
+transformers = ">=4.40"
+timm = ">=0.9"
 
 # ── GLB export feature ──────────────────────────────────────────────────
 [feature.glb.pypi-dependencies]
