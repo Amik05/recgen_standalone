@@ -48,6 +48,9 @@ tqdm = ">=4.60"
 plyfile = ">=1.0"
 opencv-python-headless = ">=4.8"
 utils3d = { git = "https://github.com/EasternJournalist/utils3d.git", rev = "9a4eb15e4021b67b12c460c7057d642626897ec8" }
+
+# SAM 2 + Grounding DINO (text masking). Not compatible with cu118 (torchvision 0.19 / torch 2.4).
+[feature.masking.pypi-dependencies]
 sam2 = ">=1.0"
 transformers = ">=4.40"
 timm = ">=0.9"
@@ -112,7 +115,7 @@ spconv-cu118 = ">=2.3"
 
 # ── Environments ─────────────────────────────────────────────────────────
 [environments]
-default = { features = ["base", "cu121", "glb", "vis"], solve-group = "cu121" }
+default = { features = ["base", "cu121", "glb", "vis", "masking"], solve-group = "cu121" }
 cu118 = { features = ["base", "cu118", "glb", "vis"], solve-group = "cu118" }
 
 # ── Tasks ────────────────────────────────────────────────────────────────

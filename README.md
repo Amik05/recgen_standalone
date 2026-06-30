@@ -83,7 +83,7 @@ Or one command for mask + reconstruct:
 
 `run_capture.sh` passes `--refine-depth` automatically when `<name>_depth.png` exists.
 
-Dependencies are installed via `pixi install` (`sam2`, `transformers`, `timm`).
+Dependencies are installed via `pixi install` in the **default** environment (`sam2`, `transformers`, `timm`). The CUDA 11.8 variant (`pixi install -e cu118`) does not include SAM 2 — use the default env for text masking.
 
 #### Prompt tips (text masking)
 
@@ -509,6 +509,6 @@ recgen/
 ## Requirements
 
 * Linux x86_64
-* NVIDIA GPU with CUDA support (tested on Blackwell / `sm_120`; also supports CUDA 11.8 via `pixi install -e cu118`)
+* NVIDIA GPU with CUDA support (tested on Blackwell / `sm_120`; CUDA 11.8 via `pixi install -e cu118` for RecGen inference only — text masking needs the default env)
 * ~8 GB+ VRAM recommended for inference
 * Internet access on first run (HuggingFace model download)

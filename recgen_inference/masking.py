@@ -138,12 +138,21 @@ def detect_all(
 
     target_size = [(image.height, image.width)]
     if hasattr(processor, "post_process_grounded_object_detection"):
+        import inspect
+
+        post_kwargs: dict[str, object] = {
+            "text_threshold": text_threshold,
+            "target_sizes": target_size,
+        }
+        sig = inspect.signature(processor.post_process_grounded_object_detection)
+        if "box_threshold" in sig.parameters:
+            post_kwargs["box_threshold"] = box_threshold
+        else:
+            post_kwargs["threshold"] = box_threshold
         results = processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=box_threshold,
-            text_threshold=text_threshold,
-            target_sizes=target_size,
+            **post_kwargs,
         )[0]
     else:
         results = processor.post_process_object_detection(
