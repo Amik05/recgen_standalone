@@ -291,10 +291,10 @@ def draw_mask_preview(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
 def mask_from_prompt(
     rgb: np.ndarray,
     prompt: str,
-    *,
+    *,  # tbh I had to google this, it just forces the rest to be keyword arguments
     depth: np.ndarray | None = None,
     refine_depth: bool = False,
-    pick: int = 0,
+    pick: int = 0,  # usually 0 for the best match, change if it grabs the wrong thing
     box_threshold: float = 0.25,
     text_threshold: float = 0.25,
     dino_model: str = DEFAULT_DINO_MODEL,
@@ -302,9 +302,15 @@ def mask_from_prompt(
     validate: bool = True,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Detect object by text prompt, segment with SAM 2, optionally refine with depth."""
+    
+    # gotta make sure we actually have a depth array if they want to refine it
+    # otherwise it crashes down below (found this out the hard way lol)
     if refine_depth and depth is None:
         raise ValueError("refine_depth=True requires a depth array")
 
+    # Step 1: Find the object with Grounding DINO
+    # this returns a detection object with the box coordinates
+    # print(f"Looking for {prompt}...") # TODO: remove debug print before PR
     detection = detect_box(
         rgb,
         prompt,
@@ -314,20 +320,31 @@ def mask_from_prompt(
         pick=pick,
     )
 
+    # Step 2: Pass the box to SAM 2 to get the actual pixel mask
+    # SAM takes the box and figures out the exact edges. It's kinda magic.
     mask = segment_sam2(rgb, box=detection.box, model_id=sam_model)
 
+    # Step 3: Optional depth cleanup
+    # if we have depth data, use it to cut out background noise
     if refine_depth and depth is not None:
         mask = refine_mask_with_depth(mask, depth)
 
+    # Step 4: Check if the mask is actually good
+    # calculate what percentage of the image is the object
     fg_pct = foreground_fraction(mask)
+    
     if validate:
+        # this might throw an error if the mask is weirdly big or tiny
         fg_pct = validate_mask(mask, detection.box)
 
+    # pack up all the info we might need later into a dictionary
     metadata: dict[str, Any] = {
         "box": detection.box,
-        "score": detection.score,
-        "label": detection.label,
-        "fg_pct": fg_pct,
-        "prompt": prompt,
+        "score": detection.score,  # how confident DINO was
+        "label": detection.label,  
+        "fg_pct": fg_pct,          
+        "prompt": prompt,          # saving the original prompt just in case
     }
+    
+    # return the final image mask and the info dict together
     return mask, metadata
