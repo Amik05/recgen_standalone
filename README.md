@@ -1,4 +1,4 @@
- # semantic-grasp — simplified README
+ # Standalone RecGen module
 
 Quick, focused instructions for the current capture → mask → reconstruct workflow.
 
