@@ -1,402 +1,65 @@
-# RecGen: Blackwell Edition (RTX 4500 PRO / sm_120)
+ # semantic-grasp — simplified README
 
-This is a customized fork of the [TRI-ML RecGen](https://github.com/TRI-ML/recgen) 3D reconstruction pipeline.
+Quick, focused instructions for the current capture → mask → reconstruct workflow.
 
-The original codebase was hard-coded to PyTorch 2.4 / CUDA 12.1 and relied heavily on FP32 `xformers` attention fallbacks. That specific configuration instantly crashes on NVIDIA Blackwell architecture GPUs (compute capability `sm_120`) with a "no kernel image available" error.
-
-This fork modernizes the dependency stack to PyTorch 2.6 Nightly and patches the custom 3D sparse transformer modules to natively route attention operations through PyTorch's built-in Scaled Dot Product Attention (SDPA), completely bypassing the `xformers` hardware bottleneck.
-
-## Key Modifications
-
-### 1. Modernized Dependency Stack (`pixi.toml`)
-* **Upgraded to PyTorch Nightly:** Shifted the deep learning backbone to pull `torch` and `torchvision` directly from PyPI's `cu128` nightly index to guarantee Blackwell (`sm_120`) tensor compatibility.
-* **Compiler Synchronization:** Downgraded the internal Pixi `nvcc` toolkit from 13.x to exactly `12.8.*` to perfectly match the PyTorch Nightly wheel. This prevents PyTorch's C++ extension builder from aborting during the compilation of `nvdiffrast` and `diff_gaussian_rasterization`.
-* **SciPy Pinning:** Pinned `scipy>=1.11,<1.15` to prevent the `uv` solver from pulling Python 3.10 incompatible versions from the PyTorch registries.
-* **Evicted xformers:** Removed `xformers` from the environment completely to force the pipeline to fall back to native math engines.
-
-### 2. Native SDPA Attention Patches
-The TRI-ML developers hard-coded their custom 3D sparse transformer modules to strictly accept `"xformers"` or `"flash_attn"`. Since `xformers` Cutlass FP32 fallbacks do not support Hopper/Blackwell, we injected native PyTorch SDPA handlers.
-
-* **`serialized_attn.py`:** Added an import bypass for `ATTN == 'sdpa'` to prevent `ValueError` crashes, allowing downstream native tensor routing.
-* **`windowed_attn.py`:** Added the `'sdpa'` import bypass, imported `math`, and explicitly wrote the memory layout transpositions for both fixed-batched and variable-length sequence `torch.nn.functional.scaled_dot_product_attention()` calculations.
-
----
-
-## Installation & Setup
-
-You must use the [pixi](https://pixi.sh) package manager. Because we are pulling pre-release PyTorch wheels, set these environment variables before installing:
+Prerequisites
+- Install dependencies with Pixi (recommended):
 
 ```bash
-# Allow UV to pull PyTorch Nightly pre-releases
-export UV_PRERELEASE=allow
-export UV_LOCK_TIMEOUT=600
-
-# Force the solver to check PyPI for SciPy instead of giving up at the PyTorch index
-export UV_INDEX_STRATEGY=unsafe-best-match
-
-# Build the lockfile and download the CUDA 12.8 / PyTorch 2.6 stack
+# from repo root
 pixi install
 ```
 
-### Optional CUDA extensions
+Capture and mask
+- Place your RGB and depth captures in `custom_examples/` as `<name>_rgb.png` and `<name>_depth.png`.
+- Create a mask automatically from a text prompt or manually via SAM:
 
-These are not required for basic mesh inference, but unlock extra outputs:
-
-| Task | Command | Enables |
-|------|---------|---------|
-| Flash Attention (faster) | `pixi run post-install` | Faster attention; falls back to SDPA if install fails |
-| nvdiffrast | `pixi run build-nvdiffrast` | `textured_mesh.glb`, turntable rendering |
-| Gaussian rasterizer | `pixi run build-gaussian-rasterizer` | `textured_mesh.glb`, `turntable.mp4` |
-
-Alternatively, use the shell helper directly:
-
+Automatic (text prompt):
 ```bash
-pixi shell
-bash scripts/setup_cuda.sh              # spconv + flash-attn (default)
-bash scripts/setup_cuda.sh --nvdiffrast # build nvdiffrast from source
-bash scripts/setup_cuda.sh --all        # everything
+./scripts/run_capture.sh <name> --prompt "white mug" --all
 ```
 
-Model weights are downloaded automatically from HuggingFace (`TRI-ML/RecGen`) on first run.
-
-### SAM 2 + Grounding DINO (masks for your own captures)
-
-RecGen does not segment objects — you need a mask PNG.
-
-**Semantic mask (recommended — text prompt, no clicks):**
-
+Manual (SAM interactive):
 ```bash
-pixi run python scripts/mask_from_text.py \
-    --rgb custom_examples/mug70_rgb.png \
-    --prompt "white mug" \
-    --output custom_examples/mug70_mask.png \
-    --preview custom_examples/mug70_mask_preview.png
+./scripts/run_capture.sh <name> --mask
 ```
 
-Or one command for mask + reconstruct:
-
-```bash
-./scripts/run_capture.sh mug70 --prompt "white mug" --all
-```
-
-**Manual mask (fallback)** — SAM 2 with browser clicks (`make_mask_sam.py --interactive-web`).
-
-`run_capture.sh` passes `--refine-depth` automatically when `<name>_depth.png` exists.
-
-Dependencies are installed via `pixi install` in the **default** environment (`sam2`, `transformers`, `timm`). The CUDA 11.8 variant (`pixi install -e cu118`) does not include SAM 2 — use the default env for text masking.
-
-#### Prompt tips (text masking)
-
-- Use **specific, visual** phrases: `"white ceramic mug"` rather than `"mug"`.
-- If nothing is detected, lower `--box-threshold` (e.g. `0.15`) or try a shorter noun phrase.
-- When several objects match, list candidates with `--list-detections`, then pick one with `--pick N` (`0` = highest score).
-- Check `<name>_mask_bbox.png` to verify Grounding DINO found the right object before running RecGen.
-- If text masking fails, fall back to `./scripts/run_capture.sh <name> --mask` (browser clicks).
-
-**Python API:**
-
-```python
-from recgen_inference import mask_from_prompt
-import cv2
-
-rgb = cv2.cvtColor(cv2.imread("custom_examples/mug70_rgb.png"), cv2.COLOR_BGR2RGB)
-mask, meta = mask_from_prompt(rgb, "white mug")
-# meta: box, score, label, fg_pct, prompt
-```
-
----
-
-## Pipeline Overview
-
-```
-RGB + Depth + Intrinsics
-        │
-        ▼
-  mask_from_text.py    ← text prompt → Grounding DINO → SAM 2  (autonomous)
-  make_mask_sam.py     ← click/box prompts                     (manual fallback)
-        │
-        ▼
-     mask.png
-        │
-        ▼
-  run_inference.py     ← RecGen (mesh + pose + overlay)
-        │
-        ▼
-  mesh.obj, overlay.png, metadata.json, …
-```
-
-| Step | Tool | When |
-|------|------|------|
-| Mask (semantic) | `scripts/mask_from_text.py` or `--prompt` on `run_capture.sh` | Your captures — text prompt |
-| Mask (manual) | `scripts/make_mask_sam.py` | Fallback when text fails |
-| Reconstruct | `scripts/run_inference.py` / `run_capture.sh` | Always |
-| Intrinsics | `scripts/dump_orbbec_intrinsics.py` | Optional — Orbbec Femto Bolt |
-
-Shipped examples under `examples/` already include masks — skip the mask step for those.
-
-### Short commands (recommended)
-
-Put captures in `custom_examples/` as `<name>_rgb.png`, `<name>_depth.png`, and (after masking) `<name>_mask.png`. Then:
-
-```bash
-cd recgen
-
-# 1) New capture — semantic mask from text
-./scripts/run_capture.sh mug70 --prompt "white mug" --all
-
-# Or manual mask in browser (SSH: ssh -L 8765:localhost:8765 … first)
-./scripts/run_capture.sh mug70 --mask
-
-# 2) Reconstruct (mask must already exist)
-./scripts/run_capture.sh mug70
-
-# Or both in one go after you have RGB+depth saved:
-./scripts/run_capture.sh mug70 --all
-
-# Shipped example
-./scripts/run_capture.sh ex0 --example
-```
-
-You only re-run **step 1** when you need a new or better mask. Step 2 is the one you repeat if you tweak intrinsics or want another export.
-
----
-
-## Quick Start: Shipped Examples
-
-The repo includes six ready-to-run examples under `examples/` (`ex0`–`ex5`). Each has a matching RGB image, depth map, and object mask. All examples share `examples/intrinsics.yaml`.
-
-From the repository root (after `pixi install`):
-
-```bash
-# Run example 0 (default output: outputs/inference_outputs/ex0/)
-pixi run python scripts/run_inference.py \
-    --rgb examples/ex0_rgb.png \
-    --depth examples/ex0_depth.png \
-    --mask examples/ex0_mask.png \
-    --intrinsics examples/intrinsics.yaml \
-    --name ex0
-```
-
-Check `outputs/inference_outputs/ex0/overlay.png` to verify the reconstruction lines up with the input image.
-
-**Run any other shipped example** — change the file prefix and `--name`:
-
-```bash
-# ex1 … ex5
-pixi run python scripts/run_inference.py \
-    --rgb examples/ex1_rgb.png \
-    --depth examples/ex1_depth.png \
-    --mask examples/ex1_mask.png \
-    --intrinsics examples/intrinsics.yaml \
-    --name ex1
-```
-
-**With Gaussian splat export:**
+Reconstruction (inference)
+- Run single-view reconstruction using the CLI:
 
 ```bash
 pixi run python scripts/run_inference.py \
-    --rgb examples/ex0_rgb.png \
-    --depth examples/ex0_depth.png \
-    --mask examples/ex0_mask.png \
-    --intrinsics examples/intrinsics.yaml \
-    --name ex0 \
-    --save-splat
+  --rgb custom_examples/<name>_rgb.png \
+  --depth custom_examples/<name>_depth.png \
+  --mask custom_examples/<name>_mask.png \
+  --intrinsics custom_examples/frame_intrinsics_approx.yaml \
+  --name <name>
 ```
 
-**Write to a custom output folder:**
+Outputs
+- Default outputs are written to `outputs/inference_outputs/<name>/` (or the `--out` folder you set).
+- Typical files: `overlay.png`, `mesh.obj`, `metadata.json`, optional Gaussian splats or `textured_mesh.glb` when CUDA extensions are available.
+
+Examples
+- Ready-to-run examples live in `examples/`. Run an example like this:
 
 ```bash
 pixi run python scripts/run_inference.py \
-    --rgb examples/ex0_rgb.png \
-    --depth examples/ex0_depth.png \
-    --mask examples/ex0_mask.png \
-    --intrinsics examples/intrinsics.yaml \
-    --out ./my_output
+  --rgb examples/ex0_rgb.png \
+  --depth examples/ex0_depth.png \
+  --mask examples/ex0_mask.png \
+  --intrinsics examples/intrinsics.yaml \
+  --name ex0
 ```
 
-| Example | RGB | Depth | Mask |
-|---------|-----|-------|------|
-| ex0 | `examples/ex0_rgb.png` | `examples/ex0_depth.png` | `examples/ex0_mask.png` |
-| ex1 | `examples/ex1_rgb.png` | `examples/ex1_depth.png` | `examples/ex1_mask.png` |
-| ex2 | `examples/ex2_rgb.png` | `examples/ex2_depth.png` | `examples/ex2_mask.png` |
-| ex3 | `examples/ex3_rgb.png` | `examples/ex3_depth.png` | `examples/ex3_mask.png` |
-| ex4 | `examples/ex4_rgb.png` | `examples/ex4_depth.png` | `examples/ex4_mask.png` |
-| ex5 | `examples/ex5_rgb.png` | `examples/ex5_depth.png` | `examples/ex5_mask.png` |
+Notes
+- `run_capture.sh` is a convenience wrapper that handles masking and inference flags (`--prompt`, `--mask`, `--all`, `--example`).
+- Use `pixi shell` and `scripts/setup_cuda.sh` if you want optional CUDA extensions (`nvdiffrast`, flash-attn) for extra exports.
 
-Preview thumbnails for each example are in `examples/thumbnails/`.
+Help / Contributing
+- For details about flags and advanced options, see `scripts/run_inference.py` and the scripts in `scripts/`.
+- Open an issue or PR if something is missing or unclear.
 
----
-
-## Your Own Captures (`custom_examples/`)
-
-Sample Orbbec captures live in `custom_examples/` (`color2`, `color3`, `frame_0145`, etc.). Unlike shipped examples, **you must create a mask** before running inference.
-
-### 1. Create a mask with SAM
-
-**Remote SSH (no display)** — use the browser UI with port forwarding:
-
-```bash
-# On your laptop (separate terminal):
-ssh -L 8765:localhost:8765 user@remote-host
-
-# On the remote machine (repo root):
-pixi run python scripts/make_mask_sam.py \
-    --rgb custom_examples/color3.png \
-    --interactive-web \
-    --port 8765 \
-    --output custom_examples/mask3.png \
-    --preview custom_examples/mask3_preview.png
-```
-
-Open **http://localhost:8765** on your laptop. **Left-click** = object, **right-click** = background, then **Generate mask**.
-
-**Local machine with a display:**
-
-```bash
-pixi run python scripts/make_mask_sam.py \
-    --rgb custom_examples/color3.png \
-    --interactive \
-    --output custom_examples/mask3.png \
-    --preview custom_examples/mask3_preview.png
-```
-
-**CLI prompts (no GUI)** — box and/or pixel coordinates:
-
-```bash
-pixi run python scripts/make_mask_sam.py \
-    --rgb custom_examples/color3.png \
-    --box 400 200 900 600 \
-    --point 640 420 \
-    --output custom_examples/mask3.png
-```
-
-Avoid `--refine-depth` unless depth on the object is reliable (it can destroy masks when depth is sparse).
-
-### 2. Run RecGen
-
-```bash
-pixi run python scripts/run_inference.py \
-    --rgb custom_examples/color3.png \
-    --depth custom_examples/depth3.png \
-    --mask custom_examples/mask3.png \
-    --intrinsics custom_examples/frame_intrinsics_approx.yaml \
-    --out ./out_color3 \
-    --save-splat
-```
-
-### 3. Orbbec camera intrinsics
-
-For accurate pose and overlay alignment, dump real intrinsics from a connected Femto Bolt:
-
-```bash
-pixi run python scripts/dump_orbbec_intrinsics.py \
-    --width 1280 --height 720 \
-    --output custom_examples/frame_intrinsics.yaml
-```
-
-Requires `pyorbbecsdk`. `custom_examples/frame_intrinsics_approx.yaml` is a rough 1280×720 guess — fine for mesh shape, less accurate for pose.
-
----
-
-## Running Inference
-
-### CLI: `scripts/run_inference.py`
-
-The main entry point for single-view reconstruction on your own captures:
-
-```bash
-pixi run python scripts/run_inference.py \
-    --rgb   path/to/rgb.png \
-    --depth path/to/depth.png \
-    --mask  path/to/mask.png \
-    --intrinsics path/to/intrinsics.yaml \
-    --name my_run
-```
-
-**All flags:**
-
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `--rgb` | yes | — | RGB image (PNG/JPG), same resolution as depth/mask |
-| `--depth` | yes | — | Depth map (see [Input formats](#input-formats) below) |
-| `--mask` | yes | — | Object mask; non-zero pixels = object |
-| `--intrinsics` | yes | — | YAML file with camera intrinsics (see below) |
-| `--out` | no | `outputs/inference_outputs/<name>/` | Output directory |
-| `--name` | no | `run` | Subfolder name when `--out` is not set |
-| `--checkpoint` | no | `recgen_base.multiview_stereo` | Model checkpoint name |
-| `--seed` | no | `42` | Random seed |
-| `--save-splat` | no | off | Also write Gaussian splat `.ply` files |
-| `--save-glb` | no | off | Also write textured `textured_mesh.glb` (needs nvdiffrast) |
-
-**Example with custom output directory and all optional exports:**
-
-```bash
-pixi run python scripts/run_inference.py \
-    --rgb examples/ex0_rgb.png \
-    --depth examples/ex0_depth.png \
-    --mask examples/ex0_mask.png \
-    --intrinsics examples/intrinsics.yaml \
-    --out ./my_output \
-    --save-splat \
-    --save-glb
-```
-
-### Python API
-
-```python
-import cv2
-import numpy as np
-import yaml
-from recgen_inference import build_recgen, generate
-
-# Load inputs
-rgb   = cv2.cvtColor(cv2.imread("rgb.png"), cv2.COLOR_BGR2RGB)
-depth = cv2.imread("depth.png", cv2.IMREAD_UNCHANGED)
-mask  = cv2.imread("mask.png", cv2.IMREAD_UNCHANGED)
-if mask.ndim == 3:
-    mask = mask[:, :, 0]
-
-with open("intrinsics.yaml") as f:
-    d = yaml.safe_load(f)
-K = np.array([[d["fu"], 0, d["pu"]],
-              [0, d["fv"], d["pv"]],
-              [0, 0, 1]], dtype=np.float64)
-
-# Run
-pipeline = build_recgen.build("recgen_base.multiview_stereo")
-result = generate(pipeline, image=rgb, depth=depth, mask=mask, intrinsics=K, seed=42)
-result.save("./out", save_splat=True, save_glb=False)
-```
-
----
-
-## Input Formats
-
-Place your input files anywhere on disk and pass their paths to `--rgb`, `--depth`, `--mask`, and `--intrinsics`. All four images must share the same width and height.
-
-### RGB (`--rgb`)
-
-* **Format:** PNG or JPG
-* **Channels:** 3-channel color (loaded as RGB)
-* **Content:** A single camera view of the object you want to reconstruct
-
-### Depth (`--depth`)
-
-* **Format:** PNG (recommended) or any format OpenCV can read
-* **Units (auto-detected):**
-  * `uint16` — treated as **millimetres** (typical Kinect / RealSense export)
-  * `float32` with max ≤ 30 — treated as **metres**
-  * `float32` with max > 30 — treated as **millimetres**, divided by 1000
-* **Content:** Per-pixel depth; pixels outside the object mask are zeroed before processing
-
-### Mask (`--mask`)
-
-* **Format:** PNG (grayscale or single channel)
-* **Values:** Any non-zero pixel marks the object; zero = background
-* **How to create:** Use `scripts/mask_from_text.py` (text prompt, recommended) or `scripts/make_mask_sam.py` (SAM 2 clicks). Shipped `examples/ex*_mask.png` files are pre-made.
-* **Tip:** The pipeline erodes the mask by default (5×5 kernel, 1 iteration) to trim noisy depth edges
-
-#### `mask_from_text.py` flags
 
 | Flag | Description |
 |------|-------------|

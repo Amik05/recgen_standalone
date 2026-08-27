@@ -10,6 +10,11 @@ build/
 dist/
 out_*/
 
+outputs/
+outputs_
+outputs_*/
+custom_examples/
+
 # Virtual environments
 .venv/
 venv/

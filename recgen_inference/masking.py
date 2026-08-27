@@ -295,7 +295,7 @@ def mask_from_prompt(
     depth: np.ndarray | None = None,
     refine_depth: bool = False,
     pick: int = 0,  # usually 0 for the best match, change if it grabs the wrong thing
-    box_threshold: float = 0.25,
+    box_threshold: float = 0.25, # confidence threshold
     text_threshold: float = 0.25,
     dino_model: str = DEFAULT_DINO_MODEL,
     sam_model: str = DEFAULT_SAM_MODEL,
@@ -304,13 +304,12 @@ def mask_from_prompt(
     """Detect object by text prompt, segment with SAM 2, optionally refine with depth."""
     
     # gotta make sure we actually have a depth array if they want to refine it
-    # otherwise it crashes down below (found this out the hard way lol)
+    # otherwise it crashes down below
     if refine_depth and depth is None:
         raise ValueError("refine_depth=True requires a depth array")
 
     # Step 1: Find the object with Grounding DINO
     # this returns a detection object with the box coordinates
-    # print(f"Looking for {prompt}...") # TODO: remove debug print before PR
     detection = detect_box(
         rgb,
         prompt,

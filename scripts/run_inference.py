@@ -36,19 +36,29 @@ def load_intrinsics(path: str) -> np.ndarray:
     return np.array([[fu, 0.0, pu], [0.0, fv, pv], [0.0, 0.0, 1.0]], dtype=np.float64)
 
 
+def _load_image_or_npy(path: str) -> np.ndarray:
+    """Load an image via OpenCV, or a raw array if the path is a .npy file."""
+    if str(path).lower().endswith(".npy"):
+        arr = np.load(path)
+        if arr is None:
+            raise FileNotFoundError(path)
+        return arr
+    arr = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if arr is None:
+        raise FileNotFoundError(path)
+    return arr
+
+
 def load_inputs(rgb_path: str, depth_path: str, mask_path: str):
-    rgb = cv2.imread(rgb_path)
-    if rgb is None:
-        raise FileNotFoundError(rgb_path)
-    rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+    rgb = _load_image_or_npy(rgb_path)
+    if rgb.ndim == 3:
+        # OpenCV loads BGR; .npy is assumed to already be RGB.
+        if not str(rgb_path).lower().endswith(".npy"):
+            rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
 
-    depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-    if depth is None:
-        raise FileNotFoundError(depth_path)
+    depth = _load_image_or_npy(depth_path)
 
-    mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
-    if mask is None:
-        raise FileNotFoundError(mask_path)
+    mask = _load_image_or_npy(mask_path)
     if mask.ndim == 3:
         mask = mask[:, :, 0]
 

@@ -1,0 +1,6 @@
+# LMO (LineMOD-Occlusion) test scene 000002 camera intrinsics
+# Source: datasets/lmo/test/000002/scene_camera.json (cam_K)
+fu: 572.4114
+fv: 573.57043
+pu: 325.2611
+pv: 242.04899
